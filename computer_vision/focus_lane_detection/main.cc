@@ -93,6 +93,54 @@ void ProcessImage(const char* filename, CameraInfo& cameraInfo,
   clock_t startTime = clock();
   mcvGetLanes(mat, raw_mat, &lanes, &lineScores, &splines, &splineScores,
               &cameraInfo, &lanesConf, NULL);
+
+    // calculate center lane
+    Spline center_spline;
+    if(splines.size() == 3){
+
+
+    center_spline = splines.back();
+    splines.pop_back();
+    splineScores.pop_back();
+
+//        // set spline degree
+//        if (splines[0].degree == splines[1].degree){
+//            center_spline.degree = splines[0].degree;
+//            }
+//        else{
+//            cout << "SPLINE DEGREE MISMATCH" << endl;
+//            return;
+//        }
+//
+//        for(int i = 0;i <= splines[0].degree;i++){
+//            center_spline.points[i].x = (splines[0].points[i].x + splines[1].points[i].x)/2;
+//            center_spline.points[i].y = (splines[0].points[i].y + splines[1].points[i].y)/2;
+//        }
+//
+//
+//        cout << "2 splines" << endl;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   clock_t endTime = clock();
   //MSG("Found %d lanes in %f msec", splines.size(), **** DEBUG BRING THIS BACK ***
   //    static_cast<double>(endTime - startTime) / CLOCKS_PER_SEC * 1000.);
@@ -136,6 +184,7 @@ void ProcessImage(const char* filename, CameraInfo& cameraInfo,
         // Get points on spline
         CvMat *points1 = mcvEvalBezierSpline(splines[0], .05);
         CvMat *points2 = mcvEvalBezierSpline(splines[1], .05);
+        CvMat *points_c = mcvEvalBezierSpline(center_spline, .05);
 
         // create points array for polygon
         CvPoint polyPoints[1][40];//[1][points1->rows + points2->rows];
@@ -173,6 +222,9 @@ void ProcessImage(const char* filename, CameraInfo& cameraInfo,
                                       1, CV_RGB(0, 0, 255));
         }
       }
+
+      // draw center spline
+      mcvDrawSpline(imDisplay, center_spline, CV_RGB(255,0,0), 3);
     }
     // show?
     if (options.show_flag)

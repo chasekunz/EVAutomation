@@ -1831,8 +1831,9 @@ void mcvPostprocessLines(const CvMat* image, const CvMat* clrImage,
       } //if
     } //for
 
+    Spline center_spline;
     // keep top two splines
-    if(keepSplines.size() > 2){
+    if(keepSplines.size() >= 2){
 
         // store score in splines
         for (int i=0; i < keepSplines.size();i++){
@@ -1852,7 +1853,26 @@ void mcvPostprocessLines(const CvMat* image, const CvMat* clrImage,
         keepSplines.erase(keepSplines.begin()+2,keepSplines.end());
         keepSplineScores.erase(keepSplineScores.begin()+2,keepSplineScores.end());
 
+        // calculate centerlane
+        CvMat *points1 = mcvEvalBezierSpline(splines[0], .05);
+        CvMat *points2 = mcvEvalBezierSpline(splines[1], .05);
+        CvMat *points_c = cvCloneMat(points1);
+
+
+        for(int i=0 ; i < points_c->rows; i++){
+            CV_MAT_ELEM(*points_c, float, i, 0) = (CV_MAT_ELEM(*points1, float, i, 0) + CV_MAT_ELEM(*points2, float, i, 0))/2;
+            CV_MAT_ELEM(*points_c, float, i, 1) = (CV_MAT_ELEM(*points1, float, i, 1) + CV_MAT_ELEM(*points2, float, i, 1))/2;
+            //cout << (CV_MAT_ELEM(*points_c, float, i, 0)) << endl;
+        }
+
+        center_spline = mcvFitBezierSpline(points_c, lineConf->ransacSplineDegree);
+        keepSplines.push_back(center_spline);
+        keepSplineScores.push_back(0);
+        //cout << "wait..." << endl;
+
     }
+
+
 
     //put back
     splines.clear();
