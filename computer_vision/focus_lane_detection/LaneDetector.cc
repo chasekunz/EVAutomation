@@ -1854,18 +1854,89 @@ void mcvPostprocessLines(const CvMat* image, const CvMat* clrImage,
         keepSplineScores.erase(keepSplineScores.begin()+2,keepSplineScores.end());
 
         // calculate centerlane
-        CvMat *points1 = mcvEvalBezierSpline(splines[0], .05);
-        CvMat *points2 = mcvEvalBezierSpline(splines[1], .05);
+        CvMat *points1 = mcvEvalBezierSpline(splines[0], .01);
+        CvMat *points2 = mcvEvalBezierSpline(splines[1], .01);
         CvMat *points_c = cvCloneMat(points1);
 
 
         for(int i=0 ; i < points_c->rows; i++){
             CV_MAT_ELEM(*points_c, float, i, 0) = (CV_MAT_ELEM(*points1, float, i, 0) + CV_MAT_ELEM(*points2, float, i, 0))/2;
             CV_MAT_ELEM(*points_c, float, i, 1) = (CV_MAT_ELEM(*points1, float, i, 1) + CV_MAT_ELEM(*points2, float, i, 1))/2;
-            //cout << (CV_MAT_ELEM(*points_c, float, i, 0)) << endl;
+            cout << (CV_MAT_ELEM(*points_c, float, i, 0)) << " , " << (CV_MAT_ELEM(*points_c, float, i, 1)) << endl;
         }
 
         center_spline = mcvFitBezierSpline(points_c, lineConf->ransacSplineDegree);
+
+        // display
+        //convert image to rgb
+        CvMat* im2 = cvCloneMat(fipm);
+        mcvScaleMat(im2, im2);
+        CvMat *ipmDisplay = cvCreateMat(fipm->rows, fipm->cols, CV_32FC3);
+        cvCvtColor(im2, ipmDisplay, CV_GRAY2RGB);
+        cvReleaseMat(&im2);
+
+        // vehicle axis
+        int center_offset = 10;
+        Line line;
+        line.startPoint = cvPoint2D32f(ipmDisplay->cols/2 + center_offset,0);
+        line.endPoint = cvPoint2D32f(ipmDisplay->cols/2 + center_offset,ipmDisplay->rows);
+        mcvDrawLine(ipmDisplay, line, CV_RGB(0, 0, 255), 1);
+
+        // find lookahead point
+        int look_ahead_row = 25;
+        int matIter = 0;
+        if(CV_MAT_ELEM(*points_c, float, matIter, 1) < look_ahead_row){
+            for(matIter = 0; matIter < points_c->rows && CV_MAT_ELEM(*points_c, float, matIter, 1) < look_ahead_row; matIter++){
+                //cout << CV_MAT_ELEM(*points_c, float, matIter, 1) << endl;
+            }
+            //cout << "Last - 1: " << CV_MAT_ELEM(*points_c, float, matIter - 1, 1) << endl;
+            //cout << "Last: " << CV_MAT_ELEM(*points_c, float, matIter - 1, 1) << endl;
+            float look_ahead_col = (CV_MAT_ELEM(*points_c, float, matIter - 1, 0) + CV_MAT_ELEM(*points_c, float, matIter, 0))/2;
+            //cout << "New: " << look_ahead_col << endl;
+            cvCircle(ipmDisplay, cvPointFrom32f(cvPoint2D32f(look_ahead_col,look_ahead_row)), 3, CV_RGB(0, 0, 255), -1);
+
+            // calculate tangent
+            Line small_tangent;
+            Line tangent;
+            small_tangent.startPoint = cvPoint2D32f(CV_MAT_ELEM(*points_c, float, matIter - 1, 0),CV_MAT_ELEM(*points_c, float, matIter - 1, 1));
+            small_tangent.endPoint = cvPoint2D32f(CV_MAT_ELEM(*points_c, float, matIter, 0),CV_MAT_ELEM(*points_c, float, matIter, 1));
+            CvSize ipmBox(ipmDisplay->width - 1,ipmDisplay->height - 1);
+            // something is weird with the bounding box. If the points are inside it does nothing with them.
+            //mcvIntersectLineWithBB(&small_tangent,ipmBox,&tangent);
+            //mcvDrawLine(ipmDisplay, small_tangent, CV_RGB(0, 255, 0), 1);
+            //cout << "Start: " << tangent.startPoint.x << " , " << tangent.startPoint.y << endl;
+            //cout << "End: " << tangent.endPoint.x << " , " << tangent.endPoint.y << endl;
+
+            float m = (CV_MAT_ELEM(*points_c, float, matIter, 1) - CV_MAT_ELEM(*points_c, float, matIter - 1, 1))/(CV_MAT_ELEM(*points_c, float, matIter, 0) - CV_MAT_ELEM(*points_c, float, matIter - 1, 0));
+            float b = CV_MAT_ELEM(*points_c, float, matIter, 1) - m*CV_MAT_ELEM(*points_c, float, matIter, 0);
+
+            float y1 = 0;
+            float y2 = ipmDisplay->height - 1;
+
+            float x1 = (y1 - b)/m;
+            float x2 = (y2 - b)/m;
+
+            tangent.startPoint = cvPoint2D32f(x1,y1);
+            tangent.endPoint = cvPoint2D32f(x2,y2);
+            mcvIntersectLineWithBB(&tangent,ipmBox,&tangent);
+
+            mcvDrawLine(ipmDisplay, tangent, CV_RGB(0, 255, 0), 1);
+
+        }
+
+
+        mcvDrawSpline(ipmDisplay, splines[0], CV_RGB(50,100,50), 1);
+        mcvDrawSpline(ipmDisplay, splines[1], CV_RGB(50,100,50), 1);
+        mcvDrawSpline(ipmDisplay, center_spline, CV_RGB(255,0,0), 1);
+        SHOW_IMAGE(ipmDisplay, "Detected Lanes IPM");
+
+
+
+
+
+
+
+
         keepSplines.push_back(center_spline);
         keepSplineScores.push_back(0);
         //cout << "wait..." << endl;
