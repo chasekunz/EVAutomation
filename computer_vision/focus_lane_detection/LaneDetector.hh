@@ -701,6 +701,8 @@ void mcvIntersectLineRThetaWithRect(FLOAT r, FLOAT theta, const Line &rect,
  * \param stopLineConf parameters for stop line detection
  * \param state returns the current state and inputs the previous state to
  *   initialize the current detection (NULL to ignore)
+ * \param lateralError lateral offset at look ahead distance
+ * \param yawError yaw difference between vehicle axis and look ahead tangent
  *
  *
  */
@@ -708,7 +710,7 @@ void mcvGetLanes(const CvMat *inImage, const CvMat* clrImage,
                  vector<Line> *lanes, vector<FLOAT> *lineScores,
                  vector<Spline> *splines, vector<float> *splineScores,
                  CameraInfo *cameraInfo, LaneDetectorConf *stopLineConf,
-                 LineState* state = NULL);
+                 float& lateralError, float& yawError, LineState* state = NULL);
 
 
 /** This function extracts lines from the passed infiltered and thresholded
@@ -752,6 +754,20 @@ void mcvPostprocessLines(const CvMat* image, const CvMat* clrImage,
                          vector<Spline> &splines, vector<float> &splineScores,
                          LaneDetectorConf *lineConf, LineState *state,
                          IPMInfo &ipmInfo, CameraInfo &cameraInfo);
+
+
+/** This function calculates the lateral offeset and yaw offset for control input
+*
+* \param rawipm the raw ipm image
+* \param fipm the filtered ipm iamge
+* \param state the state for RANSAC splines
+* \param lateralError lateral offset at look ahead distance
+* \param yawError yaw difference between vehicle axis and look ahead tangent
+*
+*/
+void mcvGetControlOutput(const CvMat* rawipm,const CvMat* fipm, LaneDetectorConf *lineConf,
+                        LineState *state, float& lateralError,float& yawError);
+
 
 /** This function gets the indices of the non-zero values in a matrix
 

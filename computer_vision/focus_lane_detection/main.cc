@@ -84,64 +84,29 @@ void ProcessImage(const char* filename, CameraInfo& cameraInfo,
 {
   // load the image
   CvMat *raw_mat, *mat;
+
   mcvLoadImage(filename, &raw_mat, &mat);
+
+  //SHOW_IMAGE(raw_mat, "raw_mat", 5);
+  //SHOW_IMAGE(mat, "mat", 5);
 
   // detect lanes
   vector<FLOAT> lineScores, splineScores;
   vector<Line> lanes;
   vector<Spline> splines;
+  float lateralError = 0;
+  float yawError = 0;
   clock_t startTime = clock();
   mcvGetLanes(mat, raw_mat, &lanes, &lineScores, &splines, &splineScores,
-              &cameraInfo, &lanesConf, NULL);
+              &cameraInfo, &lanesConf, lateralError, yawError,  NULL);
 
-    // calculate center lane
-    Spline center_spline;
-    if(splines.size() == 3){
-
-
-    center_spline = splines.back();
-    splines.pop_back();
-    splineScores.pop_back();
-
-//        // set spline degree
-//        if (splines[0].degree == splines[1].degree){
-//            center_spline.degree = splines[0].degree;
-//            }
-//        else{
-//            cout << "SPLINE DEGREE MISMATCH" << endl;
-//            return;
-//        }
-//
-//        for(int i = 0;i <= splines[0].degree;i++){
-//            center_spline.points[i].x = (splines[0].points[i].x + splines[1].points[i].x)/2;
-//            center_spline.points[i].y = (splines[0].points[i].y + splines[1].points[i].y)/2;
-//        }
-//
-//
-//        cout << "2 splines" << endl;
-    }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    //cout << endl << endl << endl << "lateralError: " << lateralError << endl;
+    //cout << "yawError: " << yawError << endl << endl;
 
   clock_t endTime = clock();
+
+  // Write a ROS publisher to PUBLISH lateral offset and raw error
+
   //MSG("Found %d lanes in %f msec", splines.size(), **** DEBUG BRING THIS BACK ***
   //    static_cast<double>(endTime - startTime) / CLOCKS_PER_SEC * 1000.);
   // update elapsed time
@@ -184,7 +149,7 @@ void ProcessImage(const char* filename, CameraInfo& cameraInfo,
         // Get points on spline
         CvMat *points1 = mcvEvalBezierSpline(splines[0], .05);
         CvMat *points2 = mcvEvalBezierSpline(splines[1], .05);
-        CvMat *points_c = mcvEvalBezierSpline(center_spline, .05);
+        //CvMat *points_c = mcvEvalBezierSpline(center_spline, .05);
 
         // create points array for polygon
         CvPoint polyPoints[1][40];//[1][points1->rows + points2->rows];
@@ -224,7 +189,7 @@ void ProcessImage(const char* filename, CameraInfo& cameraInfo,
       }
 
       // draw center spline
-      mcvDrawSpline(imDisplay, center_spline, CV_RGB(255,0,0), 3);
+      //mcvDrawSpline(imDisplay, center_spline, CV_RGB(255,0,0), 3);
     }
     // show?
     if (options.show_flag)
@@ -367,6 +332,14 @@ int Process(int argc, char** argv)
 
 
   }
+
+  //if(options.ROS)
+  //{
+  // initialize ROS
+  // write a ROS subscriber that calls
+  // ProcessImage(imageFile.c_str(), cameraInfo, lanesConf, stoplinesConf,
+  //                   options, &outputFile, i, &elapsed);
+  //}
   return 0;
 }
 

@@ -118,6 +118,14 @@ void mcvLoadImage(const char *filename, CvMat **clrImage, CvMat** channelImage)
   CvMat *schannel_mat;
   CvMat* tchannelImage = cvCreateMat(im->height, im->width, INT_MAT_TYPE);
   cvSplit(*clrImage, tchannelImage, NULL, NULL, NULL);
+
+  //// Investigate difference: Red channel vs. RGB2GRAY
+  //CvMat* bwchannelImage = cvCreateMat(im->height, im->width, INT_MAT_TYPE);
+  //CvMat* combinedchannelImage = cvCreateMat(im->height, im->width, INT_MAT_TYPE);
+  //cvCvtColor(*clrImage, bwchannelImage, CV_RGB2GRAY);
+  //cvAbsDiff(bwchannelImage, tchannelImage, combinedchannelImage);
+  //SHOW_IMAGE(combinedchannelImage,"difference",5);
+
   // convert to float
   *channelImage = cvCreateMat(im->height, im->width, FLOAT_MAT_TYPE);
   cvConvertScale(tchannelImage, *channelImage, 1./255);
