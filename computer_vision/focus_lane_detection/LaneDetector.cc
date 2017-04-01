@@ -32,6 +32,11 @@ namespace LaneDetector
   int DEBUG_THRESHOLDED = 0;
   int DEBUG_SPLINES = 0;
 
+  Spline rightSpline;
+  Spline leftSpline;
+  bool temporal_initialized = false;
+  int missed_frames = 0;
+
 
 /**
  * This function filters the input image looking for horizontal
@@ -1504,7 +1509,10 @@ void mcvGetLanes(const CvMat *inImage, const CvMat* clrImage,
 
   //state: create a new structure, and put pointer to it if it's null
   LineState newState;
-  if(!state) state = &newState;
+  if(!state){
+    state = &newState;
+    state->initialized = false;
+  }
 
 
   //Get IPM
@@ -1720,7 +1728,7 @@ void mcvGetLanes(const CvMat *inImage, const CvMat* clrImage,
 }
 
 
-/** This function calculates the lateral offeset and yaw offset for control input
+/** This function calculates the lateral offset and yaw offset for control input
 *
 * \param rawipm the raw ipm image
 * \param fipm the filtered ipm iamge
@@ -1955,6 +1963,19 @@ void mcvPostprocessLines(const CvMat* image, const CvMat* clrImage,
       } //if
     } //for
 
+    cout << keepSplines.size() << endl;
+
+        //get string
+    char title[256]; //str[256],
+    sprintf(title, "Extended IPM Splines");
+
+    //convert image to rgb
+    CvMat* im2 = cvCloneMat(rawipm);
+    mcvScaleMat(im2, im2);
+    CvMat *imClr = cvCreateMat(rawipm->rows, rawipm->cols, CV_32FC3);
+    cvCvtColor(im2, imClr, CV_GRAY2RGB);
+    cvReleaseMat(&im2);
+
     //Spline center_spline;
     // keep top two splines
     if(keepSplines.size() >= 2){
@@ -1972,16 +1993,263 @@ void mcvPostprocessLines(const CvMat* image, const CvMat* clrImage,
             keepSplineScores[i] = keepSplines[i].score;
         }
 
+
+
+
+
+        // create vector of spline points
+        std::vector<CvMat*> splines_p(keepSplines.size());
+        for (int i = 0; i < keepSplines.size();i++){
+            splines_p[i] = mcvEvalBezierSpline(keepSplines[i], .1);
+        }
+
+
+
+        int max_i = -1;
+        int max_j = -1;
+        std::vector<float> scores(splines_p[0]->rows);
+        //std::vector<float> curveDiff(splines_p[0]->rows);
+        float avg_x = 0;
+        float sum = 0;
+        float mean = 0;
+        float std_dev = 0;
+        float score = 0;
+        float current_score = 0;
+        float lane_width = 53;
+        float p1x = 0;
+        float p1y = 0;
+        float p2x = 0;
+        float p2y = 0;
+        float theta_i, r_i, meanTheta_i, meanR_i, length_i, curveness_i; // parameters for curveness
+        float theta_j, r_j, meanTheta_j, meanR_j, length_j, curveness_j; // parameters for curveness
+        std::vector<float> curveness(keepSplines.size());
+        std::vector<float> spline_avg_x(keepSplines.size());
+        float curve_diff = 0;
+        int left_index, right_index;
+        float prev_err_right = 0;
+        float prev_err_left = 0;
+
+        // analyze spline parameters
+        for (int i = 0; i < keepSplines.size(); i++){
+            // get curveness for each spline
+            mcvGetSplineFeatures(keepSplines[i], 0, &theta_i, &r_i, &length_i, &meanTheta_i, &meanR_i, &curveness[i]);
+            // get spline average x
+            spline_avg_x[i] = 0;
+            for (int k = 0; k < splines_p[i]->rows; k++){
+                spline_avg_x[i] += CV_MAT_ELEM(*splines_p[i], float, k, 0);
+            }
+            spline_avg_x[i] /= splines_p[i]->rows;
+        }
+
+        // iterate through all combinations of two splines
+        for (int i=0; i < splines_p.size();i++){
+            for (int j=i + 1; j < splines_p.size();j++){
+                // find curveness score for each spline
+
+                //mcvGetSplineFeatures(keepSplines[i], 0, &theta_i, &r_i, &length_i, &meanTheta_i, &meanR_i, &curveness_i);
+                //mcvGetSplineFeatures(keepSplines[j], 0, &theta_j, &r_j, &length_j, &meanTheta_j, &meanR_j, &curveness_j);
+
+                // get left and right spline index
+                int left_index_curr, right_index_curr;
+                if (spline_avg_x[i] < spline_avg_x[j]){
+                    left_index_curr = i;
+                    right_index_curr = j;
+                }
+                else{
+                    left_index_curr = j;
+                    right_index_curr = i;
+                }
+
+                // compare to previous frame
+                if (temporal_initialized){
+                    CvMat* prev_right_p = mcvEvalBezierSpline(rightSpline, .1);
+                    CvMat* prev_left_p = mcvEvalBezierSpline(leftSpline, .1);
+
+                    // left spline error from previous
+                    prev_err_left = 0;
+                    for (int k = 0; k < splines_p[i]->rows; k++){
+                        p1x = CV_MAT_ELEM(*splines_p[left_index_curr], float, k, 0);
+                        p1y = CV_MAT_ELEM(*splines_p[left_index_curr], float, k, 1);
+                        p2x = CV_MAT_ELEM(*prev_left_p, float, k, 0);
+                        p2y = CV_MAT_ELEM(*prev_left_p, float, k, 1);
+                        prev_err_left += abs(p1x-p2x);
+                    }
+                    prev_err_left /= splines_p[i]->rows;
+
+                    // right spline error from previous
+                    prev_err_right = 0;
+                    for (int k = 0; k < splines_p[i]->rows; k++){
+                        p1x = CV_MAT_ELEM(*splines_p[right_index_curr], float, k, 0);
+                        p1y = CV_MAT_ELEM(*splines_p[right_index_curr], float, k, 1);
+                        p2x = CV_MAT_ELEM(*prev_right_p, float, k, 0);
+                        p2y = CV_MAT_ELEM(*prev_right_p, float, k, 1);
+                        prev_err_right += abs(p1x-p2x);
+                    }
+                    prev_err_right /= splines_p[i]->rows;
+
+
+
+                    cvReleaseMat(&prev_right_p);
+                    cvReleaseMat(&prev_left_p);
+
+                }
+
+
+                curve_diff = abs(curveness[i] - curveness[j]);
+                // score distance between splines
+                cout <<  endl;
+                SHOW_MAT(splines_p[i], "Spline_i");
+                cout << endl;
+                SHOW_MAT(splines_p[j], "Spline_j");
+                cout << endl;
+                cout << "Vectors " << i << " and " << j << endl;
+                cout << "Diff\t\tSpline1\t\tSpline2" << endl;
+                for (int k = 0; k < splines_p[i]->rows; k++){
+                    p1x = CV_MAT_ELEM(*splines_p[i], float, k, 0);
+                    p1y = CV_MAT_ELEM(*splines_p[i], float, k, 1);
+                    p2x = CV_MAT_ELEM(*splines_p[j], float, k, 0);
+                    p2y = CV_MAT_ELEM(*splines_p[j], float, k, 1);
+                    scores[k] = abs(p1x - p2x);
+                    //scores[k] = sqrt((p1x - p2x)*(p1x - p2x) + (p1y - p2y)*(p1y-p2y));
+                    cout << scores[k] << "\t\t";
+                    cout << p1x << "\t\t" << p2x << endl;
+                    sum += scores[k];
+                    avg_x += (p1x + p2x)/2;
+                }
+                // calculate mean and std_dev
+                mean = sum/splines_p[i]->rows;
+                for (int k = 0; k < splines_p[i]->rows; k++){
+                    std_dev = (scores[k] - mean)*(scores[k] - mean);
+                }
+                std_dev = sqrt(std_dev/splines_p[i]->rows);
+                cout << "Average: " << mean << endl;
+                cout << "Std Dev: " << std_dev << endl;
+                avg_x /= splines_p[i]->rows;
+                cout << "Avg x: " << avg_x << endl;
+                sum = 0;
+                current_score = (100 - abs(mean - lane_width)) + (100 - std_dev) + (100 - 10*curve_diff) + (100 - (prev_err_left + prev_err_right));
+                if (current_score > score){
+                    score = current_score;
+                    max_i = i;
+                    max_j = j;
+                }
+                cout << "Score: " << current_score << endl;
+                cout << "Curve Difference: " << curve_diff << endl;
+                cout << "Prev Error Left: " << prev_err_left << endl;
+                cout << "Prev Error Right: " << prev_err_right << endl;
+                cout << endl;
+                avg_x = 0;
+            }
+
+        }
+        cout << "Best score: " << score << " i: " << max_i << " j: " << max_j << endl << endl;
+
+                // draw old splines
+        if(temporal_initialized){
+            mcvDrawSpline(imClr, leftSpline, CV_RGB(0,0,1), 1);
+            mcvDrawSpline(imClr, rightSpline, CV_RGB(0,0,1), 1);
+        }
+
+        // check is score is high enough
+        if (score > 325){
+            missed_frames = 0;
+            // get left and right spline index
+            if (spline_avg_x[max_i] < spline_avg_x[max_j]){
+                left_index = max_i;
+                right_index = max_j;
+            }
+            else{
+                left_index = max_j;
+                right_index = max_i;
+            }
+
+            leftSpline = keepSplines[left_index];
+            rightSpline = keepSplines[right_index];
+            temporal_initialized = true;
+
+
+        }
+        else{
+            missed_frames++;
+        }
+
+        //draw all splines
+        for (unsigned int j=0; j<keepSplines.size(); j++){
+            mcvDrawSpline(imClr, keepSplines[j], CV_RGB(1,0,0), 1);
+        }
+
+        // draw new splines
+        if(temporal_initialized){
+            mcvDrawSpline(imClr, leftSpline, CV_RGB(0,1,0), 1);
+            mcvDrawSpline(imClr, rightSpline, CV_RGB(0,1,0), 1);
+        }
+
+
+
+
+
+
+
+
+        // only keep the highest scoring pair of splines
+        //Spline spline1 = keepSplines[max_i];
+        //Spline spline2 = keepSplines[max_j];
+        Spline spline1 = leftSpline;
+        Spline spline2 = rightSpline;
+
+        keepSplines.clear();
+        keepSplines.push_back(spline1);
+        keepSplines.push_back(spline2);
+
+
+//        for (int i=0; i < keepSplines.size();i++){
+//            if(!(i == max_i || i == max_j))
+//                keepSplines.erase(keepSplines.begin() + i);
+//        }
+
+
+        cout << "size of keepSplines: " << keepSplines.size() << endl;
+
+
         // keep only two highest scoring spline for now
-        keepSplines.erase(keepSplines.begin()+2,keepSplines.end());
-        keepSplineScores.erase(keepSplineScores.begin()+2,keepSplineScores.end());
+        //keepSplines.erase(keepSplines.begin()+2,keepSplines.end());
+        //keepSplineScores.erase(keepSplineScores.begin()+2,keepSplineScores.end());
 
 
         //keepSplines.push_back(center_spline);
         //keepSplineScores.push_back(0);
+                // create vector of spline points
+
+        // release
+        for (int i = 0; i < keepSplines.size();i++){
+            cvReleaseMat(&splines_p[i]);
+        }
     }
 
 
+    else{ // if less than two splines
+                // Display extended splines
+
+                // draw last splines
+        if(temporal_initialized){
+            mcvDrawSpline(imClr, leftSpline, CV_RGB(0,0,1), 1);
+            mcvDrawSpline(imClr, rightSpline, CV_RGB(0,0,1), 1);
+        }
+
+
+        //draw spline
+        for (unsigned int j=0; j<keepSplines.size(); j++){
+            mcvDrawSpline(imClr, keepSplines[j], CV_RGB(0,1,0), 1);
+        }
+    }
+
+
+
+
+
+    SHOW_IMAGE(imClr, title, 10);
+    //clear
+    cvReleaseMat(&imClr);
 
     //put back
     splines.clear();
@@ -4069,7 +4337,7 @@ void mcvGetRansacLines(const CvMat *im, vector<Line> &lines,
   vector<CvRect> boxes;
   mcvGetLinesBoundingBoxes(lines, lineType, cvSize(width, height),
                            boxes);
-  mcvGroupBoundingBoxes(boxes, lineType, overlapThreshold);
+  //mcvGroupBoundingBoxes(boxes, lineType, overlapThreshold); // ** changed ** chase
   //     mcvGroupLinesBoundingBoxes(lines, lineType, overlapThreshold,
   // 			       cvSize(width, height), boxes);
 
@@ -4869,7 +5137,7 @@ void mcvGetRansacSplines(const CvMat *im, vector<Line> &lines,
   vector<CvRect> boxes;
   CvSize size = cvSize(width, height);
   mcvGetLinesBoundingBoxes(tlines, lineType, size, boxes);
-  mcvGroupBoundingBoxes(boxes, lineType, overlapThreshold);
+  //mcvGroupBoundingBoxes(boxes, lineType, overlapThreshold); // ** changed ** chase
   //     mcvGroupLinesBoundingBoxes(tlines, lineType, overlapThreshold,
   // 			       cvSize(width, height), boxes);
   tlines.clear();
@@ -5013,7 +5281,7 @@ void mcvGetRansacSplines(const CvMat *im, vector<Line> &lines,
   }
 
   //group the splines
-  mcvGroupSplines(splines, splineScores);
+  mcvGroupSplines(splines, splineScores); //*** changed *** chase
 
   //draw splines
   if(DEBUG_LINES || DEBUG_SPLINES) {//#ifdef DEBUG_GET_STOP_LINES

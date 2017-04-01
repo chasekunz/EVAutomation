@@ -16,6 +16,7 @@
 #include <iostream>
 #include <iomanip>
 #include <ctime>
+//#include "ros/ros.h"
 
 #include <cv.h>
 #include <highgui.h>
@@ -250,6 +251,11 @@ int Process(int argc, char** argv)
   mcvInitCameraInfo(options.camera_conf_arg, &cameraInfo);
   MSG("Loaded camera file");
 
+  // initialize state ** chase **
+  LineState newState;
+  newState.initialized = false;
+  LineState* state = &newState;
+
   // read the configurations
   LaneDetectorConf lanesConf, stoplinesConf;
   if (!options.no_lanes_flag)
@@ -337,7 +343,7 @@ int Process(int argc, char** argv)
   //{
   // initialize ROS
   // write a ROS subscriber that calls
-  // ProcessImage(imageFile.c_str(), cameraInfo, lanesConf, stoplinesConf,
+  // ProcessImage(imageFile.c_str(), cameraInfo, , stoplinesConf,
   //                   options, &outputFile, i, &elapsed);
   //}
   return 0;

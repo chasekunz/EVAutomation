@@ -65,6 +65,15 @@ typedef struct LineState_
 
   ///bounding boxes to work on the splines from the previous frames
   vector<CvRect> ipmBoxes;
+
+  /// final left spline
+  Spline leftSpline;
+
+  /// final right spline
+  Spline rightSpline;
+
+  /// bool to initialize
+  bool initialized;
 } LineState;
 
 typedef enum CheckSplineStatus_
@@ -756,7 +765,7 @@ void mcvPostprocessLines(const CvMat* image, const CvMat* clrImage,
                          IPMInfo &ipmInfo, CameraInfo &cameraInfo);
 
 
-/** This function calculates the lateral offeset and yaw offset for control input
+/** This function calculates the lateral offset and yaw offset for control input
 *
 * \param rawipm the raw ipm image
 * \param fipm the filtered ipm iamge
