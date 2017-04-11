@@ -1728,6 +1728,376 @@ void mcvGetLanes(const CvMat *inImage, const CvMat* clrImage,
 }
 
 
+/** This function calculates the control inputs for Taylor's paper
+*
+* \param fipm the filtered ipm iamge
+* \param points_c ponits in center lane
+* \param splines spline of two lanes
+* \param center_spline center of lane spline
+* \param vehicle_center pixel column of vehicle center
+* \param look_ahead_row row of lookahead point in pixels
+* \param taylor_yl Taylors's distance from control point lateral offset target
+* \param taylor_epsilonl Taylors's yaw difference from target tangent
+*
+*/
+void getTaylorParameters(const CvMat* fipm, const CvMat* points_c, const vector<Spline> splines, const Spline center_spline, int vehicle_center,
+                        int look_ahead_row, float& taylor_yl,float & taylor_epsilonl){
+    int matIter = 0;
+    CvPoint look_ahead_point;
+    CvPoint control_point;
+    control_point = cvPointFrom32f(cvPoint2D32f((float)vehicle_center,(float)look_ahead_row));
+    float look_ahead_col = 0;
+
+    const float X_PIXEL_RATIO = 0.014612;
+    const float Y_PIXEL_RATIO = 0.012565;
+
+    control_point = cvPointFrom32f(cvPoint2D32f((float)vehicle_center,(float)look_ahead_row));
+
+    // calculate Taylor lookahead parameters
+    if(CV_MAT_ELEM(*points_c, float, matIter, 1) < look_ahead_row){
+        for(matIter = 0; matIter < points_c->rows && CV_MAT_ELEM(*points_c, float, matIter, 1) < look_ahead_row; matIter++){
+            //cout << CV_MAT_ELEM(*points_c, float, matIter, 1) << endl;
+        }
+        look_ahead_col = (CV_MAT_ELEM(*points_c, float, matIter - 1, 0) + CV_MAT_ELEM(*points_c, float, matIter, 0))/2;
+        look_ahead_point = cvPointFrom32f(cvPoint2D32f(look_ahead_col,look_ahead_row));
+
+
+
+        // get start and endpoint
+        Line small_tangent;
+        float small_x1 = CV_MAT_ELEM(*points_c, float, matIter - 1, 0);
+        float small_y1 = CV_MAT_ELEM(*points_c, float, matIter - 1, 1);
+        float small_x2 = CV_MAT_ELEM(*points_c, float, matIter, 0);
+        float small_y2 = CV_MAT_ELEM(*points_c, float, matIter, 1);
+        small_tangent.startPoint = cvPoint2D32f(small_x1,small_y1);
+        small_tangent.endPoint = cvPoint2D32f(small_x2,small_y2);
+
+        // calculate slope
+        float m = (CV_MAT_ELEM(*points_c, float, matIter, 1) - CV_MAT_ELEM(*points_c, float, matIter - 1, 1))/(CV_MAT_ELEM(*points_c, float, matIter, 0) - CV_MAT_ELEM(*points_c, float, matIter - 1, 0));
+        float b = CV_MAT_ELEM(*points_c, float, matIter, 1) - m*CV_MAT_ELEM(*points_c, float, matIter, 0);
+
+        // caclulate lateral offset
+        taylor_yl = (vehicle_center - look_ahead_col)/X_PIXEL_RATIO; // change sign
+        //taylor_yl = (vehicle_center - look_ahead_col); // change sign
+
+
+        // calculate yaw offset
+        float yaw_target = -atan2(small_y1-small_y2,small_x1-small_x2)*180/3.14159265359; // change sign
+        taylor_epsilonl = -(90 - yaw_target);
+
+        bool display = 1;
+        if(display){
+            // display
+            //convert image to rgb
+            CvMat* im2 = cvCloneMat(fipm);
+            mcvScaleMat(im2, im2);
+            CvMat *ipmDisplay = cvCreateMat(fipm->rows, fipm->cols, CV_32FC3);
+            cvCvtColor(im2, ipmDisplay, CV_GRAY2RGB);
+            cvReleaseMat(&im2);
+
+            // vehicle axis
+            Line line;
+            line.startPoint = cvPoint2D32f(vehicle_center,0);
+            line.endPoint = cvPoint2D32f(vehicle_center,ipmDisplay->rows);
+            mcvDrawLine(ipmDisplay, line, CV_RGB(0, 0, 255), 1);
+
+            // display large tangent
+            CvSize ipmBox(ipmDisplay->width - 1,ipmDisplay->height - 1);
+            float y1 = 0;
+            float y2 = ipmDisplay->height - 1;
+
+            float x1 = (y1 - b)/m;
+            float x2 = (y2 - b)/m;
+
+            Line tangent;
+            tangent.startPoint = cvPoint2D32f(x1,y1);
+            tangent.endPoint = cvPoint2D32f(x2,y2);
+            mcvIntersectLineWithBB(&tangent,ipmBox,&tangent);
+
+            // draw
+            mcvDrawLine(ipmDisplay, tangent, CV_RGB(0, 255, 0), 1);
+            mcvDrawSpline(ipmDisplay, splines[0], CV_RGB(50,100,50), 1);
+            mcvDrawSpline(ipmDisplay, splines[1], CV_RGB(50,100,50), 1);
+            mcvDrawSpline(ipmDisplay, center_spline, CV_RGB(255,0,0), 1);
+
+            // look ahead point
+            Line distance;
+            distance.startPoint = cvPoint2D32f(look_ahead_point.x,look_ahead_point.y);
+            distance.endPoint = cvPoint2D32f(control_point.x,control_point.y);
+            mcvDrawLine(ipmDisplay, distance, CV_RGB(0, 255, 0), 1);
+            cvCircle(ipmDisplay, look_ahead_point, 3, CV_RGB(0, 255, 0), -1);
+            cvCircle(ipmDisplay, control_point, 3, CV_RGB(0, 255, 0), -1);
+
+            SHOW_IMAGE(ipmDisplay, "Taylor control parameters",10);
+
+            cvReleaseMat(&im2);
+            cvReleaseMat(&ipmDisplay);
+
+        }
+
+    }
+}
+
+/** This function calculates the control inputs for Sotelo's paper
+*
+* \param fipm the filtered ipm iamge
+* \param points_c ponits in center lane
+* \param splines spline of two lanes
+* \param center_spline center of lane spline
+* \param vehicle_center pixel column of vehicle center
+* \param look_ahead_row row of lookahead point in pixels
+* \param sotelo_de Sotelo's distance from control point to nearest point on path
+* \param sotelo_thetae Sotelo's yaw difference from target tangent
+*
+*/
+void getSoteloParameters(const CvMat* fipm, const CvMat* points_c, const vector<Spline> splines, const Spline center_spline, int vehicle_center,
+                        int look_ahead_row, float& sotelo_de, float& sotelo_thetae){
+    CvPoint closest_point;
+    CvPoint control_point;
+    float look_ahead_col = 0;
+    float closest_col = 0;
+    float closest_row = 0;
+
+    const float X_PIXEL_RATIO = 0.014612;
+    const float Y_PIXEL_RATIO = 0.012565;
+
+    int dx1 = vehicle_center;
+    int dy1 = look_ahead_row;
+    int min_index = -1;
+    float min_val = 1000000;
+    // find closest point on center spline
+    // calculate euclidian distance to each point on center spline
+    std::vector<float> distances(points_c->rows);
+    std::cout << "distances" << std::endl;
+    for(int i = 0; i < distances.size(); i++){
+        int dx2 = CV_MAT_ELEM(*points_c, float, i, 0);
+        int dy2 = CV_MAT_ELEM(*points_c, float, i, 1);
+        distances[i] = sqrt((dx2 - dx1)*(dx2 - dx1)/(X_PIXEL_RATIO*X_PIXEL_RATIO) + (dy2-dy1)*(dy2-dy1)/(Y_PIXEL_RATIO*Y_PIXEL_RATIO));
+        //distances[i] = sqrt((dx2 - dx1)*(dx2 - dx1) + (dy2-dy1)*(dy2-dy1));
+        if(distances[i] < min_val){
+            min_val = distances[i];
+            min_index = i;
+        }
+        //std::cout << i << "\t" << distances[i] << std::endl;
+    }
+    //std::cout << "Minimum at " << min_index << " (" << min_val << ")" <<std::endl;
+
+    //check index number
+    if (min_index < 1 || min_index > points_c->rows){
+        std::cout << "Minimum distance for Sotelo point out of bounds" << endl;
+        return;
+    }
+
+    //look_ahead_col = (CV_MAT_ELEM(*points_c, float, min_index - 1, 0) + CV_MAT_ELEM(*points_c, float, min_index + 1, 0))/2;
+    closest_col = CV_MAT_ELEM(*points_c, float, min_index, 0);
+    closest_row = CV_MAT_ELEM(*points_c, float, min_index, 1);
+    closest_point = cvPointFrom32f(cvPoint2D32f(closest_col,closest_row));
+
+    control_point = cvPointFrom32f(cvPoint2D32f((float)vehicle_center,(float)look_ahead_row));
+
+    // get start and endpoint
+    Line small_tangent;
+    float small_x1 = CV_MAT_ELEM(*points_c, float, min_index - 1, 0);
+    float small_y1 = CV_MAT_ELEM(*points_c, float, min_index - 1, 1);
+    float small_x2 = CV_MAT_ELEM(*points_c, float, min_index + 1, 0);
+    float small_y2 = CV_MAT_ELEM(*points_c, float, min_index + 1, 1);
+    small_tangent.startPoint = cvPoint2D32f(small_x1,small_y1);
+    small_tangent.endPoint = cvPoint2D32f(small_x2,small_y2);
+
+    // calculate slope
+    float m = (CV_MAT_ELEM(*points_c, float, min_index, 1) - CV_MAT_ELEM(*points_c, float, min_index - 1, 1))/(CV_MAT_ELEM(*points_c, float, min_index, 0) - CV_MAT_ELEM(*points_c, float, min_index - 1, 0));
+    float b = CV_MAT_ELEM(*points_c, float, min_index, 1) - m*CV_MAT_ELEM(*points_c, float, min_index, 0);
+
+    // caclulate lateral offset
+    sotelo_de = min_val;
+    // check sign of sotelo_de
+    if(vehicle_center - CV_MAT_ELEM(*points_c, float, min_index, 0) < 0){
+        sotelo_de = -sotelo_de;
+    }
+
+    // calculate yaw offset
+    float yaw_target = -atan2(small_y1-small_y2,small_x1-small_x2)*180/3.14159265359; // change sign
+    sotelo_thetae = -(90 - yaw_target);
+
+    bool display = 1;
+    if(display){
+        // display
+        //convert image to rgb
+        CvMat* im2 = cvCloneMat(fipm);
+        mcvScaleMat(im2, im2);
+        CvMat *ipmDisplay = cvCreateMat(fipm->rows, fipm->cols, CV_32FC3);
+        cvCvtColor(im2, ipmDisplay, CV_GRAY2RGB);
+        cvReleaseMat(&im2);
+
+        // vehicle axis
+        Line line;
+        line.startPoint = cvPoint2D32f(vehicle_center,0);
+        line.endPoint = cvPoint2D32f(vehicle_center,ipmDisplay->rows);
+        mcvDrawLine(ipmDisplay, line, CV_RGB(0, 0, 255), 1);
+
+
+        // display large tangent
+        CvSize ipmBox(ipmDisplay->width - 1,ipmDisplay->height - 1);
+        float y1 = 0;
+        float y2 = ipmDisplay->height - 1;
+
+        float x1 = (y1 - b)/m;
+        float x2 = (y2 - b)/m;
+
+        Line tangent;
+        tangent.startPoint = cvPoint2D32f(x1,y1);
+        tangent.endPoint = cvPoint2D32f(x2,y2);
+        mcvIntersectLineWithBB(&tangent,ipmBox,&tangent);
+
+        // draw
+        mcvDrawLine(ipmDisplay, tangent, CV_RGB(0, 255, 0), 1);
+        mcvDrawSpline(ipmDisplay, splines[0], CV_RGB(50,100,50), 1);
+        mcvDrawSpline(ipmDisplay, splines[1], CV_RGB(50,100,50), 1);
+        mcvDrawSpline(ipmDisplay, center_spline, CV_RGB(255,0,0), 1);
+
+        // look ahead point
+        Line distance;
+        distance.startPoint = cvPoint2D32f(closest_point.x,closest_point.y);
+        distance.endPoint = cvPoint2D32f(control_point.x,control_point.y);
+        mcvDrawLine(ipmDisplay, distance, CV_RGB(0, 255, 0), 1);
+        cvCircle(ipmDisplay, closest_point, 3, CV_RGB(0, 255, 0), -1);
+        cvCircle(ipmDisplay, control_point, 3, CV_RGB(0, 255, 0), -1);
+
+        SHOW_IMAGE(ipmDisplay, "Sotelo control parameters",10);
+
+        cvReleaseMat(&im2);
+        cvReleaseMat(&ipmDisplay);
+
+    }
+}
+
+
+/** This function calculates the control inputs for Park's paper
+*
+* \param fipm the filtered ipm iamge
+* \param points_c ponits in center lane
+* \param splines spline of two lanes
+* \param center_spline center of lane spline
+* \param vehicle_center pixel column of vehicle center
+* \param look_ahead_row row of lookahead point in pixels
+* \param park_L1 park's distnace from CG of vehicle to target point
+* \param park_eta park's yaw difference from vehicle center to target point
+*
+*/
+void getParkParameters(const CvMat* fipm, const CvMat* points_c, const vector<Spline> splines, const Spline center_spline, int vehicle_center,
+                        int look_ahead_row, float& park_L1,float& park_eta){
+    int matIter = 0;
+    CvPoint look_ahead_point;
+    CvPoint control_point;
+    control_point = cvPointFrom32f(cvPoint2D32f((float)vehicle_center,(float)look_ahead_row));
+    float look_ahead_col = 0;
+    float Lx = 0;   // Lateral component of L1
+    float Ly = 0;   // Longitudinal component of L1
+    float Ly_vision = 0;
+    float closest_road_pixel_to_cg = 4000;  // Distance in mm from closest road pixel to center of gravity
+    int closest_road_pixel_row = 230; // *** Change this *** Row pixel value of first valid pixel in front of bumper
+
+    const float X_PIXEL_RATIO = 0.014612;
+    const float Y_PIXEL_RATIO = 0.012565;
+
+    control_point = cvPointFrom32f(cvPoint2D32f((float)vehicle_center,(float)look_ahead_row));
+
+    // calculate Taylor lookahead parameters
+    if(CV_MAT_ELEM(*points_c, float, matIter, 1) < look_ahead_row){
+        for(matIter = 0; matIter < points_c->rows && CV_MAT_ELEM(*points_c, float, matIter, 1) < look_ahead_row; matIter++){
+            //cout << CV_MAT_ELEM(*points_c, float, matIter, 1) << endl;
+        }
+        look_ahead_col = (CV_MAT_ELEM(*points_c, float, matIter - 1, 0) + CV_MAT_ELEM(*points_c, float, matIter, 0))/2;
+        look_ahead_point = cvPointFrom32f(cvPoint2D32f(look_ahead_col,look_ahead_row));
+
+        // caclulate lateral component of L1
+        Lx = (vehicle_center - look_ahead_col)/X_PIXEL_RATIO; // change sign
+
+        // calculate longitudinal component of L1
+        Ly_vision = (closest_road_pixel_row - look_ahead_row)/Y_PIXEL_RATIO;
+        Ly = Ly_vision + closest_road_pixel_to_cg;
+
+        park_L1 = sqrt(Lx*Lx + Ly*Ly);
+
+        // calculate yaw offset
+        float yaw_target = -atan2(Lx,Ly)*180/3.14159265359; // change sign
+        //park_eta = -(90 - yaw_target);
+        park_eta = -yaw_target; // change sign to match other angles
+
+
+
+        // get start and endpoint
+        Line small_tangent;
+        float small_x1 = vehicle_center;   // Bottom of image, not actual CG
+        float small_y1 = 239 + 100;   // Bottom of image, not actual CG
+        float small_x2 = look_ahead_col;
+        float small_y2 = look_ahead_row;
+        small_tangent.startPoint = cvPoint2D32f(small_x1,small_y1);
+        small_tangent.endPoint = cvPoint2D32f(small_x2,small_y2);
+
+        // calculate slope
+        float m = (small_y2 - small_y1)/(small_x2 - small_x1);
+        float b = small_y2 - m*small_x2;
+
+
+
+
+
+        bool display = 1;
+        if(display){
+            // display
+            //convert image to rgb
+            CvMat* im2 = cvCloneMat(fipm);
+            mcvScaleMat(im2, im2);
+            CvMat *ipmDisplay = cvCreateMat(fipm->rows, fipm->cols, CV_32FC3);
+            cvCvtColor(im2, ipmDisplay, CV_GRAY2RGB);
+            cvReleaseMat(&im2);
+
+            // vehicle axis
+            Line line;
+            line.startPoint = cvPoint2D32f(vehicle_center,0);
+            line.endPoint = cvPoint2D32f(vehicle_center,ipmDisplay->rows);
+            mcvDrawLine(ipmDisplay, line, CV_RGB(0, 0, 255), 1);
+
+            // display large tangent
+            CvSize ipmBox(ipmDisplay->width - 1,ipmDisplay->height - 1);
+            float y1 = 0;
+            float y2 = ipmDisplay->height - 1;
+
+            float x1 = (y1 - b)/m;
+            float x2 = (y2 - b)/m;
+
+            Line tangent;
+            tangent.startPoint = cvPoint2D32f(x1,y1);
+            tangent.endPoint = cvPoint2D32f(x2,y2);
+            mcvIntersectLineWithBB(&tangent,ipmBox,&tangent);
+
+            // draw
+            mcvDrawLine(ipmDisplay, tangent, CV_RGB(0, 255, 0), 1);
+            mcvDrawSpline(ipmDisplay, splines[0], CV_RGB(50,100,50), 1);
+            mcvDrawSpline(ipmDisplay, splines[1], CV_RGB(50,100,50), 1);
+            mcvDrawSpline(ipmDisplay, center_spline, CV_RGB(255,0,0), 1);
+
+            // look ahead point
+            Line distance;
+            distance.startPoint = cvPoint2D32f(look_ahead_point.x,look_ahead_point.y);
+            distance.endPoint = cvPoint2D32f(control_point.x,control_point.y);
+            mcvDrawLine(ipmDisplay, distance, CV_RGB(0, 255, 0), 1);
+            cvCircle(ipmDisplay, look_ahead_point, 3, CV_RGB(0, 255, 0), -1);
+            cvCircle(ipmDisplay, control_point, 3, CV_RGB(0, 255, 0), -1);
+
+            SHOW_IMAGE(ipmDisplay, "Park control parameters",10);
+
+            cvReleaseMat(&im2);
+            cvReleaseMat(&ipmDisplay);
+
+        }
+
+    }
+
+}
+
+
 /** This function calculates the lateral offset and yaw offset for control input
 *
 * \param rawipm the raw ipm image
@@ -1760,6 +2130,11 @@ void mcvGetControlOutput(const CvMat* rawipm,const CvMat* fipm,
 
     Spline center_spline = mcvFitBezierSpline(points_c, lineConf->ransacSplineDegree);
 
+    // vehicle axis
+    int center_offset = 10;
+    int vehicle_center = fipm->cols/2 + center_offset;
+
+
 
     // find lookahead point
     float look_ahead_row = 25;
@@ -1767,82 +2142,22 @@ void mcvGetControlOutput(const CvMat* rawipm,const CvMat* fipm,
     CvPoint look_ahead_point;
     int matIter = 0;
 
-    if(CV_MAT_ELEM(*points_c, float, matIter, 1) < look_ahead_row){
-        for(matIter = 0; matIter < points_c->rows && CV_MAT_ELEM(*points_c, float, matIter, 1) < look_ahead_row; matIter++){
-            //cout << CV_MAT_ELEM(*points_c, float, matIter, 1) << endl;
-        }
-        look_ahead_col = (CV_MAT_ELEM(*points_c, float, matIter - 1, 0) + CV_MAT_ELEM(*points_c, float, matIter, 0))/2;
-        look_ahead_point = cvPointFrom32f(cvPoint2D32f(look_ahead_col,look_ahead_row));
+    //computeTaylorParams();
 
-            // vehicle axis
-        int center_offset = 10;
-        int vehicle_center = fipm->cols/2 + center_offset;
+    float taylor_yl = 0;
+    float taylor_epsilonl = 0;
+    float sotelo_de = 0;
+    float sotelo_thetae = 0;
+    float park_L1 = 0;
+    float park_eta = 0;
+    getTaylorParameters(fipm, points_c, splines, center_spline, vehicle_center, look_ahead_row, taylor_yl, taylor_epsilonl);
+    getSoteloParameters(fipm, points_c, splines, center_spline, vehicle_center, look_ahead_row, sotelo_de, sotelo_thetae);
+    getParkParameters(fipm, points_c, splines, center_spline, vehicle_center, look_ahead_row, park_L1, park_eta);
 
-        // get start and endpoint
-        Line small_tangent;
-        float small_x1 = CV_MAT_ELEM(*points_c, float, matIter - 1, 0);
-        float small_y1 = CV_MAT_ELEM(*points_c, float, matIter - 1, 1);
-        float small_x2 = CV_MAT_ELEM(*points_c, float, matIter, 0);
-        float small_y2 = CV_MAT_ELEM(*points_c, float, matIter, 1);
-        small_tangent.startPoint = cvPoint2D32f(small_x1,small_y1);
-        small_tangent.endPoint = cvPoint2D32f(small_x2,small_y2);
-
-        // calculate slope
-        float m = (CV_MAT_ELEM(*points_c, float, matIter, 1) - CV_MAT_ELEM(*points_c, float, matIter - 1, 1))/(CV_MAT_ELEM(*points_c, float, matIter, 0) - CV_MAT_ELEM(*points_c, float, matIter - 1, 0));
-        float b = CV_MAT_ELEM(*points_c, float, matIter, 1) - m*CV_MAT_ELEM(*points_c, float, matIter, 0);
-
-        // caclulate lateral offset
-        lateralError = (vehicle_center - look_ahead_col); // change sign
-
-        // calculate yaw offset
-        float yaw_target = -atan2(small_y1-small_y2,small_x1-small_x2)*180/3.14159265359; // change sign
-        yawError = -(90 - yaw_target);
-
-        bool display = 1;
-        if(display){
-            // display
-            //convert image to rgb
-            CvMat* im2 = cvCloneMat(fipm);
-            mcvScaleMat(im2, im2);
-            CvMat *ipmDisplay = cvCreateMat(fipm->rows, fipm->cols, CV_32FC3);
-            cvCvtColor(im2, ipmDisplay, CV_GRAY2RGB);
-            cvReleaseMat(&im2);
-
-            // vehicle axis
-            Line line;
-            line.startPoint = cvPoint2D32f(vehicle_center,0);
-            line.endPoint = cvPoint2D32f(vehicle_center,ipmDisplay->rows);
-            mcvDrawLine(ipmDisplay, line, CV_RGB(0, 0, 255), 1);
-
-            // look ahead point
-            cvCircle(ipmDisplay, look_ahead_point, 3, CV_RGB(0, 0, 255), -1);
-
-            // display large tangent
-            CvSize ipmBox(ipmDisplay->width - 1,ipmDisplay->height - 1);
-            float y1 = 0;
-            float y2 = ipmDisplay->height - 1;
-
-            float x1 = (y1 - b)/m;
-            float x2 = (y2 - b)/m;
-
-            Line tangent;
-            tangent.startPoint = cvPoint2D32f(x1,y1);
-            tangent.endPoint = cvPoint2D32f(x2,y2);
-            mcvIntersectLineWithBB(&tangent,ipmBox,&tangent);
-
-            // draw
-            mcvDrawLine(ipmDisplay, tangent, CV_RGB(0, 255, 0), 1);
-            mcvDrawSpline(ipmDisplay, splines[0], CV_RGB(50,100,50), 1);
-            mcvDrawSpline(ipmDisplay, splines[1], CV_RGB(50,100,50), 1);
-            mcvDrawSpline(ipmDisplay, center_spline, CV_RGB(255,0,0), 1);
-            SHOW_IMAGE(ipmDisplay, "Detected Lanes IPM",50);
-
-            cvReleaseMat(&im2);
-            cvReleaseMat(&ipmDisplay);
-
-        }
-
-    }
+    std::cout << "Taylor:\t" << taylor_yl << "\t" << taylor_epsilonl << std::endl;
+    std::cout << "Sotelo:\t" << sotelo_de << "\t" << sotelo_thetae << std::endl;
+    std::cout << "Park:\t" << park_L1 << "\t" << park_eta << std::endl;
+    std::cout << std::endl;
 
     return;
 }
@@ -1963,7 +2278,7 @@ void mcvPostprocessLines(const CvMat* image, const CvMat* clrImage,
       } //if
     } //for
 
-    cout << keepSplines.size() << endl;
+    //cout << keepSplines.size() << endl;
 
         //get string
     char title[256]; //str[256],
@@ -2097,13 +2412,13 @@ void mcvPostprocessLines(const CvMat* image, const CvMat* clrImage,
 
                 curve_diff = abs(curveness[i] - curveness[j]);
                 // score distance between splines
-                cout <<  endl;
-                SHOW_MAT(splines_p[i], "Spline_i");
-                cout << endl;
-                SHOW_MAT(splines_p[j], "Spline_j");
-                cout << endl;
-                cout << "Vectors " << i << " and " << j << endl;
-                cout << "Diff\t\tSpline1\t\tSpline2" << endl;
+                //cout <<  endl;
+                //SHOW_MAT(splines_p[i], "Spline_i");
+                //cout << endl;
+                //SHOW_MAT(splines_p[j], "Spline_j");
+                //cout << endl;
+                //cout << "Vectors " << i << " and " << j << endl;
+                //cout << "Diff\t\tSpline1\t\tSpline2" << endl;
                 for (int k = 0; k < splines_p[i]->rows; k++){
                     p1x = CV_MAT_ELEM(*splines_p[i], float, k, 0);
                     p1y = CV_MAT_ELEM(*splines_p[i], float, k, 1);
@@ -2111,8 +2426,8 @@ void mcvPostprocessLines(const CvMat* image, const CvMat* clrImage,
                     p2y = CV_MAT_ELEM(*splines_p[j], float, k, 1);
                     scores[k] = abs(p1x - p2x);
                     //scores[k] = sqrt((p1x - p2x)*(p1x - p2x) + (p1y - p2y)*(p1y-p2y));
-                    cout << scores[k] << "\t\t";
-                    cout << p1x << "\t\t" << p2x << endl;
+                    //cout << scores[k] << "\t\t";
+                    //cout << p1x << "\t\t" << p2x << endl;
                     sum += scores[k];
                     avg_x += (p1x + p2x)/2;
                 }
@@ -2122,10 +2437,10 @@ void mcvPostprocessLines(const CvMat* image, const CvMat* clrImage,
                     std_dev = (scores[k] - mean)*(scores[k] - mean);
                 }
                 std_dev = sqrt(std_dev/splines_p[i]->rows);
-                cout << "Average: " << mean << endl;
-                cout << "Std Dev: " << std_dev << endl;
+                //cout << "Average: " << mean << endl;
+                //cout << "Std Dev: " << std_dev << endl;
                 avg_x /= splines_p[i]->rows;
-                cout << "Avg x: " << avg_x << endl;
+                //cout << "Avg x: " << avg_x << endl;
                 sum = 0;
                 current_score = (100 - abs(mean - lane_width)) + (100 - std_dev) + (100 - 10*curve_diff) + (100 - (prev_err_left + prev_err_right));
                 if (current_score > score){
@@ -2133,16 +2448,16 @@ void mcvPostprocessLines(const CvMat* image, const CvMat* clrImage,
                     max_i = i;
                     max_j = j;
                 }
-                cout << "Score: " << current_score << endl;
-                cout << "Curve Difference: " << curve_diff << endl;
-                cout << "Prev Error Left: " << prev_err_left << endl;
-                cout << "Prev Error Right: " << prev_err_right << endl;
-                cout << endl;
+                //cout << "Score: " << current_score << endl;
+                //cout << "Curve Difference: " << curve_diff << endl;
+                //cout << "Prev Error Left: " << prev_err_left << endl;
+                //cout << "Prev Error Right: " << prev_err_right << endl;
+                //cout << endl;
                 avg_x = 0;
             }
 
         }
-        cout << "Best score: " << score << " i: " << max_i << " j: " << max_j << endl << endl;
+        //cout << "Best score: " << score << " i: " << max_i << " j: " << max_j << endl << endl;
 
                 // draw old splines
         if(temporal_initialized){
@@ -2208,7 +2523,7 @@ void mcvPostprocessLines(const CvMat* image, const CvMat* clrImage,
 //        }
 
 
-        cout << "size of keepSplines: " << keepSplines.size() << endl;
+        //cout << "size of keepSplines: " << keepSplines.size() << endl;
 
 
         // keep only two highest scoring spline for now

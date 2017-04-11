@@ -764,6 +764,16 @@ void mcvPostprocessLines(const CvMat* image, const CvMat* clrImage,
                          LaneDetectorConf *lineConf, LineState *state,
                          IPMInfo &ipmInfo, CameraInfo &cameraInfo);
 
+void getTaylorParameters(const CvMat* fipm, const CvMat* points_c, const vector<Spline> splines, const Spline center_spline, int center_offset,
+                        int look_ahead_row,
+                        float& taylor_yl,float & taylor_epsilonl);
+
+void getSoteloParameters(const CvMat* fipm, const CvMat* points_c, const vector<Spline> splines, const Spline center_spline, int vehicle_center,
+                        int look_ahead_row, float& sotelo_de,float & sotelo_thetae);
+
+void getParkParameters(const CvMat* fipm, const CvMat* points_c, const vector<Spline> splines, const Spline center_spline, int vehicle_center,
+                        int look_ahead_row, float& park_L1,float& park_eta);
+
 
 /** This function calculates the lateral offset and yaw offset for control input
 *
